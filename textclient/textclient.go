@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -14,14 +15,18 @@ import (
 )
 
 var (
-	serverArg   *string = flag.String("server", "", "Reflector server")
-	portArg     *uint   = flag.Uint("port", 17000, "Port the reflector listens on")
-	moduleArg   *string = flag.String("module", "T", "Module to connect to")
-	callsignArg *string = flag.String("callsign", "N0CALL", "User's callsign")
-	helpArg     *bool   = flag.Bool("h", false, "Print arguments")
+	serverArg     *string = flag.String("server", "", "Reflector server")
+	portArg       *uint   = flag.Uint("port", 17000, "Port the reflector listens on")
+	moduleArg     *string = flag.String("module", "T", "Module to connect to")
+	callsignArg   *string = flag.String("callsign", "N0CALL", "User's callsign")
+	helpArg       *bool   = flag.Bool("h", false, "Print arguments")
+	listenArg     *bool   = flag.Bool("listen", false, "Start a TCP interface")
+	listenPortArg *string = flag.String("listenport", "17001", "Port the client will listen on")
 )
 
 var encodedCallsign *[6]byte
+
+var newM17Msgs = make(chan string)
 
 func main() {
 	flag.Parse()
@@ -36,7 +41,6 @@ func main() {
 		fmt.Printf("Bad callsign %s: %v", *callsignArg, err)
 		os.Exit(1)
 	}
-
 	r, err := m17.NewRelay(*serverArg, *portArg, *moduleArg, *callsignArg, handleM17)
 	if err != nil {
 		fmt.Printf("Error creating client: %v", err)
@@ -53,8 +57,13 @@ func main() {
 	go func() {
 		r.Handle()
 		// When Handle exits, we're done
+		close(newM17Msgs)
 		os.Exit(0)
 	}()
+
+	if *listenArg {
+		go startListener(*listenPortArg, r)
+	}
 
 	handleConsoleInput(r)
 }
@@ -76,6 +85,9 @@ func handleM17(p m17.Packet) error {
 	}
 	if p.Type == m17.PacketTypeSMS && (dst == *callsignArg || dst == m17.DestinationAll || dst[0:1] == "#") {
 		fmt.Printf("\n%s %s>%s: %s\n> ", time.Now().Format(time.DateTime), src, dst, msg)
+		if *listenArg {
+			newM17Msgs <- fmt.Sprintf("%s %s>%s: %s\n", time.Now().Format(time.DateTime), src, dst, msg)
+		}
 	}
 	return nil
 }
@@ -143,4 +155,96 @@ func parseInput(input string) (command, callsign, message string, ok bool) {
 	}
 	callsign, message, ok = strings.Cut(input, ": ")
 	return
+}
+
+func startListener(port string, c *m17.Relay) {
+	prefix := ":"
+	formattedPort := prefix + port
+	listener, err := net.Listen("tcp", formattedPort)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	defer listener.Close()
+
+	fmt.Printf("Listening on port %s\n", *listenPortArg)
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
+		go handleConnection(conn, c)
+	}
+}
+
+func handleConnection(conn net.Conn, c *m17.Relay) {
+	defer conn.Close()
+	fmt.Printf("Connection established with %s\n", conn.RemoteAddr())
+	_, err := conn.Write([]byte("200\n"))
+	if err != nil {
+		fmt.Println("Error writing:", err)
+		return
+	}
+
+	go func(conn net.Conn) { // send new messages to them too
+		for str := range newM17Msgs {
+			_, err := conn.Write([]byte(str))
+			if err != nil {
+				fmt.Println("Error writing:", err)
+			}
+		}
+	}(conn)
+
+	reader := bufio.NewReader(conn)
+	for {
+		message, err := reader.ReadString('\n')
+		if err != nil {
+			fmt.Println("Error reading:", err)
+			return
+		}
+		fmt.Printf("Received from %s: %s", conn.RemoteAddr(), message)
+		command, callsign, message, ok := parseInput(message)
+		if !ok {
+			// Ignore bad input
+			fmt.Printf("Error parsing command \"%s\"\n", command)
+			_, err = conn.Write([]byte("400\n"))
+			if err != nil {
+				fmt.Println("Error writing:", err.Error())
+				return
+			}
+			continue
+		}
+		if command == "" {
+			// Add a trailing NUL
+			msg := append([]byte(message), 0)
+			p, err := m17.NewPacket(callsign, *callsignArg, m17.PacketTypeSMS, msg)
+			if err != nil {
+				fmt.Printf("Error creating Packet: %v\n", err)
+				_, err = conn.Write([]byte("422\n"))
+				if err != nil {
+					fmt.Println("Error writing:", err.Error())
+					return
+				}
+				continue
+			}
+			err = c.SendPacket(*p)
+			if err != nil {
+				fmt.Printf("Error sending message: %v\n", err)
+				_, err = conn.Write([]byte("500\n"))
+				if err != nil {
+					fmt.Println("Error writing:", err.Error())
+					return
+				}
+				continue
+			}
+			_, err = conn.Write([]byte("200\n"))
+			if err != nil {
+				fmt.Println("Error writing:", err.Error())
+				return
+			}
+		}
+	}
+
 }
