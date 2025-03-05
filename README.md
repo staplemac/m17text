@@ -1,3 +1,11 @@
+# Fork
+
+This fork adds in a TCP listener, see flags. When connected, a TCP client will recieve 200 on the intial connect and for every received packet. It will receive 400 for malformed requests. It takes input per line like the console:
+DSTCALL: Example message
+
+Its line separated output is similar but comma separated and begins with the characters MSG like so:
+MSG2025-03-04 22:57:16,SRCCALL,DSTCALL,Example Message
+
 # M17Text
 
 Some POC/experimentation around doing text messaging and data communications using the [M17 ham radio mode](https://m17foundation.org/).
