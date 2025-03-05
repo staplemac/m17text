@@ -34,6 +34,9 @@ func main() {
 		flag.Usage()
 		return
 	}
+	if *listenPortArg != "" && !*listenArg {
+		fmt.Print("Warning: Listen port specified but listen not enabled\n")
+	}
 
 	var err error
 	encodedCallsign, err = m17.EncodeCallsign(*callsignArg)
@@ -86,7 +89,7 @@ func handleM17(p m17.Packet) error {
 	if p.Type == m17.PacketTypeSMS && (dst == *callsignArg || dst == m17.DestinationAll || dst[0:1] == "#") {
 		fmt.Printf("\n%s %s>%s: %s\n> ", time.Now().Format(time.DateTime), src, dst, msg)
 		if *listenArg {
-			newM17Msgs <- fmt.Sprintf("%s %s>%s: %s\n", time.Now().Format(time.DateTime), src, dst, msg)
+			newM17Msgs <- fmt.Sprintf("MSG%s,%s,%s,%s\n", time.Now().Format(time.DateTime), src, dst, msg)
 		}
 	}
 	return nil
@@ -175,7 +178,8 @@ func startListener(port string, c *m17.Relay) {
 			fmt.Println(err)
 			continue
 		}
-		go handleConnection(conn, c)
+		//go handleConnection(conn, c) //weird behavior as channels are not parallel, so we cannot be either
+		handleConnection(conn, c)
 	}
 }
 
