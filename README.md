@@ -1,10 +1,10 @@
 # Fork
 
-This fork adds in a TCP listener, see flags. When connected, a TCP client will recieve 200 on the intial connect and for every received packet. It will receive 400 for malformed requests. It takes input per line like the console:
-DSTCALL: Example message
+This is a really jank branch of a jank fork to demonstrate bridging @ALL on a module to RF using an OpenRTX device using the rtxlink binary. I have my own (also jank) fork of RTXLink so that the radio can act as a modem. Everything is computer directed so we have to repeatedly poll the radio for new texts. Rtxlink is likely to be reworked heavily so this is more a demo than anything.
 
-Its line separated output is similar but comma separated and begins with the characters MSG like so:
-MSG2025-03-04 22:57:16,SRCCALL,DSTCALL,Example Message
+Example command:
+
+go run ./textclient.go -callsign "YOURCALL" -server 'reflector.address' -module 'T' -rtxlink -rtxlinkpath '/your/bin/of/rtxlink'
 
 # M17Text
 

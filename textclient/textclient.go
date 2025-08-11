@@ -6,8 +6,10 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"log"
 	"net"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -22,6 +24,10 @@ var (
 	helpArg       *bool   = flag.Bool("h", false, "Print arguments")
 	listenArg     *bool   = flag.Bool("listen", false, "Start a TCP interface")
 	listenPortArg *string = flag.String("listenport", "17001", "Port the client will listen on")
+	rtxLinkArg     *bool  = flag.Bool("rtxlink", false, "Use an rtxlink binary for a radio modem")
+	rtxLinkPathArg *string = flag.String("rtxlinkpath", "/dev/null", "Path to the rtxlink binary")
+	rtxLinkDevice *string = flag.String("rtxlinkdevice", "/dev/ttyACM0", "Path to the OpenRTX serial device")
+	
 )
 
 var encodedCallsign *[6]byte
@@ -68,6 +74,10 @@ func main() {
 		go startListener(*listenPortArg, r)
 	}
 
+	if *rtxLinkArg{
+		go rtxLinkPoll(*rtxLinkPathArg, *rtxLinkDevice, r)
+	}
+
 	handleConsoleInput(r)
 }
 
@@ -90,6 +100,14 @@ func handleM17(p m17.Packet) error {
 		fmt.Printf("\n%s %s>%s: %s\n> ", time.Now().Format(time.DateTime), src, dst, msg)
 		if *listenArg {
 			newM17Msgs <- fmt.Sprintf("MSG%s,%s,%s,%s\n", time.Now().Format(time.DateTime), src, dst, msg)
+		}
+
+		if *rtxLinkArg{
+			out, err := exec.Command(*rtxLinkPathArg, *rtxLinkDevice, "msg", msg).Output();
+			if err != nil {
+        		log.Fatal(err)
+    		}
+    		fmt.Printf("Send success: %s\n", out)
 		}
 	}
 	return nil
@@ -251,4 +269,40 @@ func handleConnection(conn net.Conn, c *m17.Relay) {
 		}
 	}
 
+}
+
+func rtxLinkPoll(rtxLinkPathArg string, rtxLinkDevice string, c *m17.Relay) {
+	t := time.Now();
+	waiting := false; 
+	for {
+	select {
+	case <-time.After(5 * time.Second):
+		out, err := exec.Command(rtxLinkPathArg, rtxLinkDevice, "msg").Output();
+			if err != nil {
+        		log.Fatal(err)
+    		}
+		parse := strings.SplitN(string(out), ",", 2);
+		//fmt.Printf("=\n%s\n=", string(out)[0:4]);
+		if string(out)[0:4] == "NONE" {
+			if !waiting {fmt.Printf("No messages since %s\n", t.Format("15:04:05"));
+			waiting = true;
+		}
+		} else {
+		waiting = false;
+		t = time.Now();
+    	fmt.Printf("Rcv success: %s by %s\n", parse[1], parse[0]);
+		// Add a trailing NUL
+			msg := append([]byte(parse[1]), 0)
+			p, err := m17.NewPacket(m17.DestinationAll, parse[0], m17.PacketTypeSMS, msg) //all for now because limited scope
+				if err != nil {
+					fmt.Printf("Error creating Packet: %v\n", err)
+					continue
+				}
+				err = c.SendPacket(*p)
+				if err != nil {
+					fmt.Printf("Error sending message: %v\n", err)
+					continue
+				}
+	}
+}} 
 }
