@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jancona/m17text/m17"
+	"golang.org/x/time/rate"
 )
 
 var (
@@ -33,6 +34,8 @@ var (
 var encodedCallsign *[6]byte
 
 var newM17Msgs = make(chan string)
+
+var limiter = rate.NewLimiter(1, 1)
 
 func main() {
 	flag.Parse()
@@ -103,6 +106,15 @@ func handleM17(p m17.Packet) error {
 		}
 
 		if *rtxLinkArg{
+			//rate limit
+			r := limiter.ReserveN(time.Now(), 1)
+			if !r.OK() {
+			// Not allowed to act! Did you remember to set lim.burst to be > 0 ?
+			println("rate limiter stopped me from sending a text to RF")
+			return nil
+			}
+			time.Sleep(r.Delay())
+
 			out, err := exec.Command(*rtxLinkPathArg, *rtxLinkDevice, "msg", msg).Output();
 			if err != nil {
         		log.Fatal(err)
@@ -277,6 +289,15 @@ func rtxLinkPoll(rtxLinkPathArg string, rtxLinkDevice string, c *m17.Relay) {
 	for {
 	select {
 	case <-time.After(5 * time.Second):
+		//rate limit
+		r := limiter.ReserveN(time.Now(), 1)
+		if !r.OK() {
+		// Not allowed to act! Did you remember to set lim.burst to be > 0 ?
+		println("rate limiter stopped me from polling")
+		return
+		}
+		time.Sleep(r.Delay())
+		
 		out, err := exec.Command(rtxLinkPathArg, rtxLinkDevice, "msg").Output();
 			if err != nil {
         		log.Fatal(err)
